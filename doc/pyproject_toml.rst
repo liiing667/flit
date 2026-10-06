@@ -354,6 +354,13 @@ Paths within this directory are typically installed to corresponding paths under
 a prefix (such as a virtualenv directory). E.g. you might save a man page for a
 script as ``(data)/share/man/man1/foo.1``.
 
+In a wheel, files below a top-level ``scripts`` directory are placed in the
+``.data/scripts`` section, with executable permission bits preserved. Files
+in any other top-level directory, such as ``etc``, are placed under
+``.data/data`` (e.g. ``data/etc/app.conf`` -> ``.data/data/etc/app.conf``).
+Paths which are absolute or use ``..`` to escape the data directory are
+rejected at build time, and symlinks are not followed.
+
 Whether these files are detected by the systems they're meant to integrate with
 depends on how your package is installed and how those systems are configured.
 For instance, installing in a virtualenv usually doesn't affect anything outside

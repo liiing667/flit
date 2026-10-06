@@ -289,6 +289,39 @@ def parse_entry_point(ep):
 
     return mod, func
 
+def validate_entry_points(entrypoints, source_dir):
+    """Check entry points before building a wheel.
+
+    Raises ValueError if a name is repeated within a group, or if a
+    console/gui script refers to a module which doesn't exist in source_dir.
+    """
+    for group, entries in entrypoints.items():
+        items = entries.items() if hasattr(entries, 'items') else entries
+        seen = set()
+        for name, value in items:
+            if name in seen:
+                raise ValueError(
+                    f"Duplicate entry point {name!r} in group {group!r}"
+                )
+            seen.add(name)
+            if group in {'console_scripts', 'gui_scripts'}:
+                _check_script_entry_point(group, name, value, source_dir)
+
+def _check_script_entry_point(group, name, value, source_dir):
+    mod = value.split(':', 1)[0].strip()
+    if not all(piece.isidentifier() for piece in mod.split('.')):
+        raise ValueError(
+            f"Invalid module path in entry point {name!r} "
+            f"in group {group!r}: {value!r}"
+        )
+    mod_path = Path(source_dir, *mod.split('.'))
+    if not (mod_path.with_suffix('.py').is_file()
+            or (mod_path / '__init__.py').is_file()):
+        raise ValueError(
+            f"Entry point {name!r} in group {group!r} refers to module "
+            f"{mod!r}, which does not exist in {source_dir}"
+        )
+
 def write_entry_points(d, fp):
     """Write entry_points.txt from a two-level dict
 

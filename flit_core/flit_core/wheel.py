@@ -26,6 +26,42 @@ Generator: flit {__version__}
 Root-Is-Purelib: true
 """
 
+#: Recognised categories in a wheel's .data directory
+#: (https://packaging.python.org/specifications/binary-distribution-format/).
+DATA_DIR_CATEGORIES = frozenset(
+    {'purelib', 'platlib', 'headers', 'scripts', 'data'}
+)
+
+def _check_data_rel_path(rel_path):
+    """Check that *rel_path* stays within the data directory.
+
+    Returns the normalised relative path. Raises ValueError for absolute
+    paths and paths containing '..' which would escape the data directory.
+    This is a purely lexical check - symlinks are not resolved or followed.
+    """
+    normp = osp.normpath(rel_path)
+    if (osp.isabs(normp) or normp == '..'
+            or normp.startswith('..' + os.sep)):
+        raise ValueError(
+            f"Path {rel_path!r} in data directory is not contained within "
+            f"the data directory"
+        )
+    return normp
+
+def data_dir_arcname(dist_name, rel_path):
+    """Map a path relative to the data directory to its path in the wheel.
+
+    Files in a top-level directory matching one of the wheel .data
+    categories go into that category (e.g. scripts/ -> .data/scripts/);
+    everything else goes under the 'data' category (e.g. etc/ ->
+    .data/data/etc/).
+    """
+    normp = _check_data_rel_path(rel_path)
+    parts = normp.split(os.sep)
+    if parts[0] in DATA_DIR_CATEGORIES:
+        return osp.join(f'{dist_name}.data', *parts)
+    return osp.join(f'{dist_name}.data', 'data', *parts)
+
 def _write_wheel_file(f, supports_py2=False):
     f.write(wheel_file_template)
     if supports_py2:
@@ -172,8 +208,13 @@ class WheelBuilder:
     def add_data_directory(self):
         dist_name = common.normalize_dist_name(self.metadata.name, self.metadata.version)
         for full_path in common.walk_data_dir(self.data_directory):
+            # Don't follow symlinks, either directories (os.walk uses
+            # followlinks=False) or individual files.
+            if osp.islink(full_path):
+                log.warning("Ignoring symlink in data directory: %s", full_path)
+                continue
             rel_path = os.path.relpath(full_path, self.data_directory)
-            self._add_file(full_path, f'{dist_name}.data/data/{rel_path}')
+            self._add_file(full_path, data_dir_arcname(dist_name, rel_path))
 
     def write_metadata(self):
         log.info('Writing metadata files')
@@ -203,6 +244,7 @@ class WheelBuilder:
 
     def build(self, editable=False):
         try:
+            common.validate_entry_points(self.entrypoints, self.module.source_dir)
             if editable:
                 self.add_pth()
             else:
