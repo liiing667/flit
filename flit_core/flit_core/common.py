@@ -496,7 +496,8 @@ def walk_data_dir(data_directory):
     """Iterate over the files in the given data directory.
 
     Yields paths prefixed with data_directory - caller may want to make them
-    relative to that. Excludes any __pycache__ subdirectories.
+    relative to that. Excludes any __pycache__ subdirectories. Symbolic links
+    are not followed.
     """
     if data_directory is None:
         return
@@ -504,6 +505,12 @@ def walk_data_dir(data_directory):
     for dirpath, dirs, files in os.walk(data_directory):
         for file in sorted(files):
             full_path = os.path.join(dirpath, file)
+            if os.path.islink(full_path):
+                log.info("Skipping symlink in data directory: %s", full_path)
+                continue
             yield full_path
 
-        dirs[:] = [d for d in sorted(dirs) if d != '__pycache__']
+        dirs[:] = [
+            d for d in sorted(dirs)
+            if d != '__pycache__' and not os.path.islink(os.path.join(dirpath, d))
+        ]

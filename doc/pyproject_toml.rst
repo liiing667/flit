@@ -354,6 +354,11 @@ Paths within this directory are typically installed to corresponding paths under
 a prefix (such as a virtualenv directory). E.g. you might save a man page for a
 script as ``(data)/share/man/man1/foo.1``.
 
+Files under a top-level ``scripts`` folder inside this directory are handled
+specially: they go to the ``scripts`` scheme (e.g. the ``bin`` directory of an
+environment), and their executable permission bits are preserved. Everything
+else, such as ``(data)/etc/app.conf``, is installed relative to the prefix.
+
 Whether these files are detected by the systems they're meant to integrate with
 depends on how your package is installed and how those systems are configured.
 For instance, installing in a virtualenv usually doesn't affect anything outside

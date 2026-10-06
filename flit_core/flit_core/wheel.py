@@ -38,6 +38,24 @@ def _set_zinfo_mode(zinfo, mode):
     zinfo.external_attr = mode << 16
 
 
+def _check_data_rel_path(rel_path):
+    """Ensure that a path relative to the data directory stays inside it.
+
+    Returns the normalised relative path. Raises ValueError for absolute
+    paths or paths that escape the data directory (e.g. containing '..').
+    """
+    if osp.isabs(rel_path):
+        raise ValueError(
+            f"Path {rel_path!r} in the data directory must not be absolute"
+        )
+    norm = osp.normpath(rel_path)
+    if norm == '..' or norm.startswith('..' + osp.sep):
+        raise ValueError(
+            f"Path {rel_path!r} in the data directory points outside it"
+        )
+    return norm
+
+
 def zip_timestamp_from_env() -> tuple[int, int, int, int, int, int] | None:
     """Prepare a timestamp from $SOURCE_DATE_EPOCH, if set"""
     try:
@@ -171,9 +189,64 @@ class WheelBuilder:
 
     def add_data_directory(self):
         dist_name = common.normalize_dist_name(self.metadata.name, self.metadata.version)
-        for full_path in common.walk_data_dir(self.data_directory):
-            rel_path = os.path.relpath(full_path, self.data_directory)
-            self._add_file(full_path, f'{dist_name}.data/data/{rel_path}')
+        data_dir = self.data_directory
+        if data_dir is None:
+            return
+        for full_path in common.walk_data_dir(data_dir):
+            rel_path = _check_data_rel_path(os.path.relpath(full_path, data_dir))
+            parts = rel_path.split(os.sep)
+            if len(parts) > 1 and parts[0] == 'scripts':
+                # Scripts get installed to the scripts directory (e.g. bin/),
+                # and keep their executable permission bits.
+                dest = f'{dist_name}.data/scripts/{"/".join(parts[1:])}'
+            else:
+                dest = f'{dist_name}.data/data/{rel_path}'
+            self._add_file(full_path, dest)
+
+    def _module_exists(self, mod):
+        """Check if a dotted module name exists in the project directory."""
+        base = Path(self.module.source_dir)
+        mod_rel = mod.replace('.', os.sep)
+        return (
+            (base / (mod_rel + '.py')).is_file()
+            or (base / mod_rel / '__init__.py').is_file()
+        )
+
+    def check_entry_points(self):
+        """Validate entry points before building the wheel.
+
+        Raises ValueError for malformed entry points, duplicate names, and
+        console/gui scripts referring to modules which don't exist in the
+        project. Error messages identify the group and name involved.
+        """
+        script_names = {}
+        for group in sorted(self.entrypoints):
+            seen = set()
+            for name in sorted(self.entrypoints[group]):
+                value = self.entrypoints[group][name]
+                if name in seen:
+                    raise ValueError(
+                        f"Duplicate entry point {name!r} in group {group!r}"
+                    )
+                seen.add(name)
+                try:
+                    mod, _func = common.parse_entry_point(value)
+                except ValueError as e:
+                    raise ValueError(
+                        f"Invalid entry point {name!r} in group {group!r}: {e}"
+                    ) from e
+                if group in ('console_scripts', 'gui_scripts'):
+                    if name in script_names:
+                        raise ValueError(
+                            f"Entry point {name!r} is defined in both "
+                            f"{script_names[name]!r} and {group!r}"
+                        )
+                    script_names[name] = group
+                    if not self._module_exists(mod):
+                        raise ValueError(
+                            f"Entry point {name!r} in group {group!r} refers to "
+                            f"module {mod!r}, which does not exist in the project"
+                        )
 
     def write_metadata(self):
         log.info('Writing metadata files')
@@ -203,6 +276,7 @@ class WheelBuilder:
 
     def build(self, editable=False):
         try:
+            self.check_entry_points()
             if editable:
                 self.add_pth()
             else:
